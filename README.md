@@ -176,7 +176,7 @@ If you use this package in academic work, please cite the original VDERM paper:
   year={2021},
   publisher={Springer}
 }
-
+```
 And optionally, this implementation:
 ```bibtex
 @software{vderm2026,
