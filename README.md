@@ -181,7 +181,7 @@ And optionally, this implementation:
 ```bibtex
 @software{vderm2026,
   title={pyVDERM: A Python implementation of Volumetric Density-Equalizing Reference Map},
-  author={Your Name},
+  author={Jonah Spector},
   year={2026},
   url={https://github.com/yourusername/vderm}
 }
@@ -193,10 +193,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- Original VDERM algorithm by Gary Choi and Chris Rycroft
+- Original VDERM algorithm by Gary P.T. Choi and Chris H. Rycroft
 - Based on the diffusion cartogram method by Gastner & Newman (2004)
 
 ## Support
 
-- Documentation: [GitHub Wiki](https://github.com/yourusername/pyVDERM/wiki)
-- Issues: [GitHub Issues](https://github.com/yourusername/pyVDERM/issues)
+- Documentation: [GitHub Wiki](https://github.com/jspector792/pyVDERM/wiki)
+- Issues: [GitHub Issues](https://github.com/jspector792/pyVDERM/issues)
