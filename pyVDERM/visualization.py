@@ -14,7 +14,7 @@ import os
 from tqdm import tqdm
 import warnings
 
-from ..core import read_xyz, HAS_PYMESHLAB
+from .core import read_xyz, HAS_PYMESHLAB
 
 
 def animate_grid_deformation(export_folder='vderm_exports', 
@@ -90,7 +90,7 @@ def animate_grid_deformation(export_folder='vderm_exports',
     # Load first frame to determine subsample indices
     pos_first, norm_first, dens_first = read_xyz(files[0])
     
-    # Determine subsample indices ONCE (use for all frames)
+    # Determine subsample indices
     if subsample and len(pos_first) > subsample:
         subsample_indices = np.random.choice(len(pos_first), subsample, replace=False)
         subsample_indices.sort()  # Sort for better cache locality
@@ -300,10 +300,10 @@ def animate_surface_deformation(export_folder='vderm_exports',
     # Load first frame to determine subsample indices
     pos_first, norm_first, dense_first = read_xyz(files[0])
     
-    # Determine subsample indices ONCE (use for all frames)
+    # Determine subsample indices 
     if subsample and len(pos_first) > subsample:
         subsample_indices = np.random.choice(len(pos_first), subsample, replace=False)
-        subsample_indices.sort()  # Sort for better cache locality
+        subsample_indices.sort()  
         print(f"Subsampling {len(pos_first)} points to {subsample} points")
     else:
         subsample_indices = None
@@ -407,10 +407,11 @@ def animate_surface_deformation(export_folder='vderm_exports',
     plt.close()
     print(f"✓ Animation saved to: {output_file}")
     
-def visualize_grid_sequence(export_folder, pattern='grid_iteration_*.xyz', 
-                            save_animation=False, output_file='deformation.gif'):
+
+def interactive_pcd_plot(export_folder, pattern='grid_iteration_*.xyz', 
+                            subsample=True, max_points=10_000):
     """
-    Visualize a sequence of exported grid states to see deformation over time.
+    Visualize a sequence of exported grid states to see deformation over time. 
     
     Parameters
     ----------
@@ -418,15 +419,21 @@ def visualize_grid_sequence(export_folder, pattern='grid_iteration_*.xyz',
         Folder containing exported grid files
     pattern : str
         Glob pattern to match grid files (default: 'grid_iteration_*.xyz')
-    save_animation : bool
-        If True, save as animated GIF
-    output_file : str
-        Output filename for animation (if save_animation=True)
+    subsample : bool
+        Whether to downsample the number of points plotted
+    max_points : 
+        max points to plot if subsampling enabled
     
     Examples
     --------
     >>> visualize_grid_sequence('deformation_sequence')
     >>> visualize_grid_sequence('exports', save_animation=True, output_file='deform.gif')
+
+    Notes
+    -----
+    ipympl and ipywidgets must be installed, and the jupyter backend must be set 
+    to %matplotlib widgets for this function to work. Otherwise it will produce a 
+    static plot of the first frame
     """
     
     # Find all matching files
@@ -442,7 +449,7 @@ def visualize_grid_sequence(export_folder, pattern='grid_iteration_*.xyz',
     all_positions = []
     all_densities = []
     for f in files:
-        pos, norms, dens = read_xyz_underlying(f)
+        pos, norms, dens = read_xyz(f)
         all_positions.append(pos)
         all_densities.append(dens)
     
@@ -455,118 +462,72 @@ def visualize_grid_sequence(export_folder, pattern='grid_iteration_*.xyz',
     dens_min = all_dens_concat.min()
     dens_max = all_dens_concat.max()
     
-    # Visualization
-    if save_animation:
-        # Create animation
-        from matplotlib.animation import FuncAnimation, PillowWriter
-        
-        fig = plt.figure(figsize=(10, 8))
-        ax = fig.add_subplot(111, projection='3d')
-        
-        def update(frame):
-            ax.clear()
-            positions, densities = all_positions[frame], all_densities[frame]
-            
-            # Subsample for faster rendering if needed
-            if len(positions) > 10000:
-                indices = np.random.choice(len(positions), 10000, replace=False)
-                positions = positions[indices]
-                densities = densities[indices]
-            
-            scatter = ax.scatter(positions[:, 0], positions[:, 1], positions[:, 2],
-                               c=densities, cmap='viridis', s=1, 
-                               vmin=dens_min, vmax=dens_max)
-            
-            ax.set_xlim(pos_min[0], pos_max[0])
-            ax.set_ylim(pos_min[1], pos_max[1])
-            ax.set_zlim(pos_min[2], pos_max[2])
-            
-            ax.set_box_aspect([
-            pos_max[0] - pos_min[0],
-            pos_max[1] - pos_min[1],
-            pos_max[2] - pos_min[2]
-            ])
-        
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            ax.set_title(f'Iteration {frame * 10}')  # Adjust based on export_frequency
-            
-            return scatter,
-        
-        anim = FuncAnimation(fig, update, frames=len(files), interval=200, blit=False)
-        anim.save(output_file, writer=PillowWriter(fps=5))
-        print(f"Animation saved to {output_file}")
-        plt.close()
-        
+    # Interactive visualization
+    from matplotlib.widgets import Slider
+    
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Initial plot
+    positions, densities = all_positions[0], all_densities[0]
+    
+    # Subsample if needed
+    if subsample and len(positions) > max_points:
+        indices = np.random.choice(len(positions), 10000, replace=False)
+        positions_sub = positions[indices]
+        densities_sub = densities[indices]
     else:
-        # Interactive visualization
-        from matplotlib.widgets import Slider
-        
-        fig = plt.figure(figsize=(12, 8))
-        ax = fig.add_subplot(111, projection='3d')
-        
-        # Initial plot
-        positions, densities = all_positions[0], all_densities[0]
+        positions_sub = positions
+        densities_sub = densities
+    
+    scatter = ax.scatter(positions_sub[:, 0], positions_sub[:, 1], positions_sub[:, 2],
+                        c=densities_sub, cmap='viridis', s=1,
+                        vmin=dens_min, vmax=dens_max)
+    
+    ax.set_xlim(pos_min[0], pos_max[0])
+    ax.set_ylim(pos_min[1], pos_max[1])
+    ax.set_zlim(pos_min[2], pos_max[2])
+    
+    ax.set_box_aspect([
+    pos_max[0] - pos_min[0],
+    pos_max[1] - pos_min[1],
+    pos_max[2] - pos_min[2]
+    ])
+            
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('Iteration 0')
+    
+    cbar = plt.colorbar(scatter, ax=ax, label='Density', shrink=0.5)
+    
+    # Add slider
+    ax_slider = plt.axes([0.2, 0.02, 0.6, 0.03])
+    slider = Slider(ax_slider, 'Iteration', 0, len(files)-1, 
+                    valinit=0, valstep=1)
+    
+    def update_plot(val):
+        frame = int(slider.val)
+        positions, densities = all_positions[frame], all_densities[frame]
         
         # Subsample if needed
-        if len(positions) > 10000:
-            indices = np.random.choice(len(positions), 10000, replace=False)
+        if subsample and len(positions) > max_points:
             positions_sub = positions[indices]
             densities_sub = densities[indices]
         else:
             positions_sub = positions
             densities_sub = densities
         
-        scatter = ax.scatter(positions_sub[:, 0], positions_sub[:, 1], positions_sub[:, 2],
-                           c=densities_sub, cmap='viridis', s=1,
-                           vmin=dens_min, vmax=dens_max)
+        scatter._offsets3d = (positions_sub[:, 0], 
+                                positions_sub[:, 1], 
+                                positions_sub[:, 2])
+        scatter.set_array(densities_sub)
         
-        ax.set_xlim(pos_min[0], pos_max[0])
-        ax.set_ylim(pos_min[1], pos_max[1])
-        ax.set_zlim(pos_min[2], pos_max[2])
-        
-        ax.set_box_aspect([
-        pos_max[0] - pos_min[0],
-        pos_max[1] - pos_min[1],
-        pos_max[2] - pos_min[2]
-        ])
-            
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.set_title('Iteration 0')
-        
-        cbar = plt.colorbar(scatter, ax=ax, label='Density', shrink=0.5)
-        
-        # Add slider
-        ax_slider = plt.axes([0.2, 0.02, 0.6, 0.03])
-        slider = Slider(ax_slider, 'Iteration', 0, len(files)-1, 
-                       valinit=0, valstep=1)
-        
-        def update_plot(val):
-            frame = int(slider.val)
-            positions, densities = all_positions[frame], all_densities[frame]
-            
-            # Subsample if needed
-            if len(positions) > 10000:
-                indices = np.random.choice(len(positions), 10000, replace=False)
-                positions_sub = positions[indices]
-                densities_sub = densities[indices]
-            else:
-                positions_sub = positions
-                densities_sub = densities
-            
-            scatter._offsets3d = (positions_sub[:, 0], 
-                                 positions_sub[:, 1], 
-                                 positions_sub[:, 2])
-            scatter.set_array(densities_sub)
-            
-            ax.set_title(f'Iteration {frame * 10}')  # Adjust based on export_frequency
-            fig.canvas.draw_idle()
-        
-        slider.on_changed(update_plot)
-        plt.show()
+        ax.set_title(f'Iteration {frame * 10}')  # Adjust based on export_frequency
+        fig.canvas.draw_idle()
+    
+    slider.on_changed(update_plot)
+    plt.show()
 
 
 def create_side_by_side_animation(export_folder='vderm_exports',
@@ -811,7 +772,6 @@ def create_side_by_side_animation(export_folder='vderm_exports',
             fig.suptitle(f'Grid vs Surface: Iteration {iter_num}', 
                         fontsize=14)
         
-        # plt.tight_layout(rect=[0, 0, 1, 0.96])  # Leave room for suptitle
         return scatter_grid,
     
     # Create initial frame for colorbar
@@ -870,7 +830,7 @@ def plot_density_evolution(export_folder='vderm_exports',
     std_densities = []
     
     for f in tqdm(files, desc="Analyzing density"):
-        pos, norm, densities = read_xyz_underlying(f)
+        pos, norm, densities = read_xyz(f)
         
         # Extract iteration number
         filename = os.path.basename(f)
@@ -1328,3 +1288,187 @@ def export_all_to_paraview(export_folder='vderm_exports',
         if 'meshes (converted from STL, no density)' in exported:
             print("\n⚠ Meshes converted from STL do not contain density data.")
             print("  For density coloring, re-run with mesh_format='vtk'")
+
+
+def plot_pcd(positions, densities=None, normals=None, 
+             title='Point Cloud',
+             cmap='plasma',
+             figsize=(12, 9),
+             show_normals=False,
+             normal_scale=0.05,
+             point_size=1,
+             alpha=0.6,
+             view='3d',
+             save_file=None):
+    """
+    Plot a single point cloud with optional density coloring and normal vectors.
+    
+    Can display as 3D view or three 2D orthogonal projections.
+    
+    Parameters
+    ----------
+    positions : ndarray, shape (n_points, 3)
+        Point positions [x, y, z]
+    densities : ndarray, shape (n_points,), optional
+        Density values for color coding. If None, uses uniform color.
+    normals : ndarray, shape (n_points, 3), optional
+        Normal or velocity vectors to display
+    title : str, default='Point Cloud'
+        Plot title
+    cmap : str, default='plasma'
+        Colormap for density visualization
+    figsize : tuple, default=(12, 9)
+        Figure size in inches
+    show_normals : bool, default=False
+        If True and normals provided, draw vector arrows
+    normal_scale : float, default=0.05
+        Scale factor for normal vector arrows (as fraction of domain size)
+    point_size : float, default=1
+        Size of points in scatter plot
+    alpha : float, default=0.6
+        Point transparency (0=transparent, 1=opaque)
+    view : str, default='3d'
+        View type: '3d' for 3D plot, '2d' for three orthogonal projections
+    save_file : str, optional
+        If provided, save plot to this file instead of showing
+    
+    Returns
+    -------
+    fig : matplotlib Figure
+        The figure object
+    
+    Examples
+    --------
+    >>> # Simple 3D plot
+    >>> positions = np.random.rand(1000, 3)
+    >>> plot_pcd(positions)
+    
+    >>> # With density coloring
+    >>> densities = np.random.rand(1000)
+    >>> plot_pcd(positions, densities=densities, cmap='viridis')
+    
+    >>> # 2D projections with density
+    >>> plot_pcd(positions, densities=densities, view='2d')
+    
+    >>> # Show normal vectors
+    >>> normals = np.random.randn(1000, 3)
+    >>> plot_pcd(positions, normals=normals, show_normals=True)
+    
+    >>> # Save to file
+    >>> plot_pcd(positions, densities=densities, save_file='myplot.png')
+    """
+    
+    # Get bounds
+    pos_min = positions.min(axis=0)
+    pos_max = positions.max(axis=0)
+    ranges = pos_max - pos_min
+    
+    # Compute normal scale if showing normals
+    if show_normals and normals is not None:
+        arrow_length = normal_scale * ranges.mean()
+    
+    if view == '3d':
+        # Single 3D plot
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Plot points
+        if densities is not None:
+            scatter = ax.scatter(positions[:, 0], positions[:, 1], positions[:, 2],
+                               c=densities, cmap=cmap, s=point_size, alpha=alpha)
+            cbar = plt.colorbar(scatter, ax=ax, label='Density', shrink=0.6)
+        else:
+            ax.scatter(positions[:, 0], positions[:, 1], positions[:, 2],
+                      c='dodgerblue', s=point_size, alpha=alpha)
+        
+        # Show normals if requested
+        if show_normals and normals is not None:
+            # Subsample for clarity
+            step = max(1, len(positions) // 100)
+            ax.quiver(positions[::step, 0], positions[::step, 1], positions[::step, 2],
+                     normals[::step, 0], normals[::step, 1], normals[::step, 2],
+                     length=arrow_length, color='red', alpha=0.5, arrow_length_ratio=0.3)
+        
+        # Set limits and aspect
+        ax.set_xlim(pos_min[0], pos_max[0])
+        ax.set_ylim(pos_min[1], pos_max[1])
+        ax.set_zlim(pos_min[2], pos_max[2])
+        ax.set_box_aspect(ranges)
+        
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        
+    elif view == '2d':
+        # Three orthogonal projections
+        fig, (ax_xy, ax_xz, ax_yz) = plt.subplots(1, 3, figsize=figsize)
+        
+        # XY plane
+        if densities is not None:
+            scatter = ax_xy.scatter(positions[:, 0], positions[:, 1],
+                                   c=densities, cmap=cmap, s=point_size, alpha=alpha)
+        else:
+            ax_xy.scatter(positions[:, 0], positions[:, 1],
+                         c='dodgerblue', s=point_size, alpha=alpha)
+        
+        ax_xy.set_xlim(pos_min[0], pos_max[0])
+        ax_xy.set_ylim(pos_min[1], pos_max[1])
+        ax_xy.set_xlabel('X')
+        ax_xy.set_ylabel('Y')
+        ax_xy.set_title('XY Plane (Top View)')
+        ax_xy.set_aspect('equal')
+        ax_xy.grid(True, alpha=0.3)
+        
+        # XZ plane
+        if densities is not None:
+            ax_xz.scatter(positions[:, 0], positions[:, 2],
+                         c=densities, cmap=cmap, s=point_size, alpha=alpha)
+        else:
+            ax_xz.scatter(positions[:, 0], positions[:, 2],
+                         c='dodgerblue', s=point_size, alpha=alpha)
+        
+        ax_xz.set_xlim(pos_min[0], pos_max[0])
+        ax_xz.set_ylim(pos_min[2], pos_max[2])
+        ax_xz.set_xlabel('X')
+        ax_xz.set_ylabel('Z')
+        ax_xz.set_title('XZ Plane (Front View)')
+        ax_xz.set_aspect('equal')
+        ax_xz.grid(True, alpha=0.3)
+        
+        # YZ plane
+        if densities is not None:
+            scatter = ax_yz.scatter(positions[:, 1], positions[:, 2],
+                                   c=densities, cmap=cmap, s=point_size, alpha=alpha)
+        else:
+            ax_yz.scatter(positions[:, 1], positions[:, 2],
+                         c='dodgerblue', s=point_size, alpha=alpha)
+        
+        ax_yz.set_xlim(pos_min[1], pos_max[1])
+        ax_yz.set_ylim(pos_min[2], pos_max[2])
+        ax_yz.set_xlabel('Y')
+        ax_yz.set_ylabel('Z')
+        ax_yz.set_title('YZ Plane (Side View)')
+        ax_yz.set_aspect('equal')
+        ax_yz.grid(True, alpha=0.3)
+        
+        # Add colorbar if using densities
+        if densities is not None:
+            cbar = fig.colorbar(scatter, ax=[ax_xy, ax_xz, ax_yz],
+                              label='Density', shrink=0.8, pad=0.02)
+        
+        fig.suptitle(title, fontsize=16, fontweight='bold')
+        # plt.tight_layout()
+        
+    else:
+        raise ValueError(f"view must be '3d' or '2d', got '{view}'")
+    
+    # Save or show
+    if save_file:
+        plt.savefig(save_file, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"✓ Plot saved to: {save_file}")
+    else:
+        plt.show()
+    
+    return fig

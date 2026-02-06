@@ -1,7 +1,5 @@
 import numpy as np
 from scipy import interpolate
-import matplotlib.pyplot as plt
-import pandas as pd
 from tqdm import tqdm
 import os
 from scipy.interpolate import RegularGridInterpolator, NearestNDInterpolator
@@ -13,20 +11,32 @@ except ImportError:
     ml = None
     
 def _require_pymeshlab(function_name):
-    """Raise helpful error if pymeshlab not available."""
+    """Raise error if pymeshlab not available."""
     if not HAS_PYMESHLAB:
         raise ImportError(
             f"{function_name} requires pymeshlab for mesh operations.\n"
             f"Install with: pip install pymeshlab\n"
-            f"Or install vderm with mesh support: pip install vderm[mesh]"
+            f"Or install vderm with mesh support: pip install pyVDERM[mesh]"
         )
 
 def create_pcd(mesh_path, n_pts=25_000, sampling_method='poisson'):
     """
-    Read in a mesh file and output a point cloud of the surface
-    args:
-        n_pts: 
-        sampling_method: 'poisson' (even distribution) or 'uniform' (faster but less even)
+    Parameters
+    ----------
+    mesh_path : str
+        mesh file path
+    n_pts : int
+        number of points to sample
+    sampling_method : str, 'poisson' or 'uniform'
+        pymeshlab sampling method
+    
+    Returns
+    -------
+    outs : ndarray, shape (n_points, 3)
+        Point positions [x, y, z]
+    normals : ndarray, shape (n_points, 3)
+        Normal vectors [n_x, n_y, n_z]
+
     """
     _require_pymeshlab('create_pcd')
     
@@ -101,7 +111,7 @@ def write_xyz(filepath, positions, normals=None, densities=None):
     # Stack all columns
     data = np.hstack(data_columns)
     
-    # Save with numpy (fast and clean)
+    # Save with numpy
     np.savetxt(filepath, data, fmt='%.6e', delimiter=' ')
 
 
@@ -196,49 +206,62 @@ def read_xyz(filepath):
     return positions, normals, densities
                 
     
-def create_underlying_grid(shape, h, min_bounds=None):
+def compute_grid_dimensions(box_dims, max_points=32768):
     """
-    Create a regular 3D grid for VDERM computation.
+    Compute grid dimensions (L, M, N) and spacing (h) for a given box size.
+    
+    Creates a grid with approximately max_points that maintains uniform
+    spacing and respects the box aspect ratio.
     
     Parameters
     ----------
-    shape : tuple of ints (L, M, N)
-        Number of grid points along each axis
-    h : float
-        Grid spacing (distance between adjacent nodes)
-    min_bounds : array-like [x_min, y_min, z_min], optional
-        Lower corner of grid. If None, starts at origin.
+    box_dims : array-like, shape (3,)
+        Desired box dimensions [x_size, y_size, z_size]
+    max_points : int, default=32768
+        Target number of grid points
     
     Returns
     -------
-    grid : ndarray, shape (L*M*N, 3)
-        Grid node positions
+    shape : tuple (L, M, N)
+        Grid dimensions
+    h : float
+        Grid spacing (uniform in all directions)
+    
+    Examples
+    --------
+    >>> # For a 2×3×4 box with ~10k points
+    >>> shape, h = compute_grid_dimensions([2, 3, 4], max_points=10000)
+    >>> print(f"Grid: {shape}, spacing: {h:.4f}")
     """
-    L, M, N = shape
-    min_bounds = np.zeros(3) if min_bounds is None else np.array(min_bounds)
+    # Compute aspect ratios
+    aspect_ratios = box_dims / box_dims.min()
     
-    # Vectorized grid creation (much faster than loops)
-    i_coords = np.arange(L)
-    j_coords = np.arange(M)
-    k_coords = np.arange(N)
+    # Find grid dimensions that give approximately max_points
+    volume_factor = np.prod(aspect_ratios)
+    base_dim = (max_points / volume_factor) ** (1/3)
     
-    # Create meshgrid and flatten
-    I, J, K = np.meshgrid(i_coords, j_coords, k_coords, indexing='ij')
+    # Compute dimensions based on aspect ratios
+    dimensions = aspect_ratios * base_dim
     
-    grid = np.column_stack([
-        I.ravel(),
-        J.ravel(),
-        K.ravel()
-    ]) * h + min_bounds
+    # Round to integers (at least 3 points per dimension)
+    L, M, N = np.maximum(np.round(dimensions).astype(int), 3)
     
+    # Compute uniform grid spacing
+    h = box_dims[0] / (L - 1)
     
-def make_initial_grid(pcd, max_points=32768):
+    # Adjust other dimensions to maintain uniform spacing
+    M = max(3, int(np.round(box_dims[1] / h)) + 1)
+    N = max(3, int(np.round(box_dims[2] / h)) + 1)
+    
+    return (L, M, N), h
+    
+def make_initial_grid(pcd, max_points=32768, padding=(2, 2, 2)):
     """
-    Create a computational grid automatically sized to fit a point cloud object.
+    Generate the parameters for a computational grid automatically sized to fit a point cloud object.
     
     The grid will:
     - Have the same aspect ratio as the object's bounding box
-    - Be 3x larger than the object in each dimension (object uses central 1/3)
+    - Be padded by specified ratios in each dimension
     - Have approximately max_points total grid points
     - Be centered on the object
     
@@ -250,11 +273,17 @@ def make_initial_grid(pcd, max_points=32768):
         Target maximum number of grid points. The function will create
         a grid with approximately this many points while maintaining
         the aspect ratio. Default is 32^3 = 32768.
+    padding : tuple of floats (x_ratio, y_ratio, z_ratio), default=(2, 2, 2)
+        Padding ratios for each axis. Grid size along each axis will be
+        ratio * object_size for that axis. Default (2, 2, 2) means grid
+        is 2x object size in each dimension (object uses central 1/3).
+        Examples:
+        - (2, 2, 2): Uniform 2x padding (default)
+        - (3, 3, 3): More accomodating 3x padding 
+        - (5, 3, 3): More padding in X direction
     
     Returns
     -------
-    grid : ndarray, shape (L*M*N, 3)
-        Grid node positions
     grid_params : dict
         Dictionary containing:
         - 'shape': tuple (L, M, N) - grid dimensions
@@ -262,14 +291,23 @@ def make_initial_grid(pcd, max_points=32768):
         - 'min_bounds': ndarray - lower corner [x_min, y_min, z_min]
         - 'max_bounds': ndarray - upper corner [x_max, y_max, z_max]
         - 'object_bounds': dict with 'min' and 'max' - original object bounds
+        - 'padding': tuple - the padding ratios used
     
     Examples
     --------
+    >>> # Default 2x padding
     >>> pcd, normals = create_pcd('mesh.stl', n_pts=25000)
     >>> grid, params = make_initial_grid(pcd, max_points=32768)
-    >>> print(f"Grid shape: {params['shape']}")
-    >>> print(f"Grid spacing: {params['h']:.4f}")
+    
+    >>> # Tighter fit with 1.5x padding
+    >>> grid, params = make_initial_grid(pcd, max_points=32768, padding=(1.5, 1.5, 1.5))
+    
+    >>> # Asymmetric padding (more space in Z direction)
+    >>> grid, params = make_initial_grid(pcd, max_points=32768, padding=(3, 3, 5))
     """
+    
+    # Convert padding to array
+    padding = np.array(padding)
     
     # Get object bounding box
     obj_min = pcd.min(axis=0)
@@ -277,45 +315,20 @@ def make_initial_grid(pcd, max_points=32768):
     obj_size = obj_max - obj_min
     obj_center = (obj_min + obj_max) / 2
     
-    # Grid should be 3x object size in each dimension
-    grid_size = 3 * obj_size
+    # Compute box size
+    padding = np.array(padding)
+    box_dims = padding * obj_size
     
-    # Compute aspect ratios
-    aspect_ratios = grid_size / grid_size.min()
-    
-    # Find grid dimensions that give approximately max_points
-    # We want: L * M * N ≈ max_points
-    # With L:M:N = aspect_ratios[0]:aspect_ratios[1]:aspect_ratios[2]
-    
-    # Start with the smallest dimension
-    # If aspect ratios are [1, 2, 3], and we want ~32768 points
-    # Then L * (2L) * (3L) = 6L^3 ≈ 32768
-    # So L ≈ (32768/6)^(1/3)
-    
-    volume_factor = np.prod(aspect_ratios)
-    base_dim = (max_points / volume_factor) ** (1/3)
-    
-    # Compute dimensions based on aspect ratios
-    dimensions = aspect_ratios * base_dim
+    # Use helper to get grid dimensions
+    shape, h = compute_grid_dimensions(box_dims, max_points)
     
     # Round to integers (at least 3 points per dimension for derivatives)
-    L, M, N = np.maximum(np.round(dimensions).astype(int), 3)
-    
-    # Compute grid spacing (should be same in all directions)
-    # Use the dimension with most points to be conservative
-    h = grid_size[0] / (L - 1)  # -1 because we want size between first and last point
-    
-    # Adjust other dimensions to maintain uniform spacing
-    M = max(3, int(np.round(grid_size[1] / h)) + 1)
-    N = max(3, int(np.round(grid_size[2] / h)) + 1)
+    L, M, N = shape
     
     # Compute grid bounds (centered on object)
     grid_half_size = h * np.array([L-1, M-1, N-1]) / 2
     grid_min = obj_center - grid_half_size
     grid_max = obj_center + grid_half_size
-    
-    # Create the grid
-    grid = create_underlying_grid((L, M, N), h, min_bounds=grid_min)
     
     # Package parameters
     grid_params = {
@@ -329,10 +342,11 @@ def make_initial_grid(pcd, max_points=32768):
             'size': obj_size,
             'center': obj_center
         },
+        'padding': tuple(padding),
         'actual_points': L * M * N
     }
     
-    return grid, grid_params
+    return grid_params
 
 
 def print_grid_info(grid_params):
@@ -381,8 +395,8 @@ def print_grid_info(grid_params):
     print(f"  y: min={margins_min[1]:.4f}, max={margins_max[1]:.4f}")
     print(f"  z: min={margins_min[2]:.4f}, max={margins_max[2]:.4f}")
     
-    # Verify 3x relationship
-    print(f"\nVerification (should be ~3.0 in each dimension):")
+    # Verify padding relationship
+    print(f"\nVerification for padding ratios:")
     actual_ratios = grid_size / obj_size
     print(f"  x: {actual_ratios[0]:.3f}x")
     print(f"  y: {actual_ratios[1]:.3f}x")
@@ -460,7 +474,7 @@ class VDERMGrid:
         else:
             self.rho = np.array(density_func)
     
-    def update_density(self, dt, method='free'):
+    def update_density(self, dt):
         """Diffuse density field using heat equation"""
         rho_new = np.zeros_like(self.rho)
         
@@ -468,9 +482,9 @@ class VDERMGrid:
             for j in range(self.M):
                 for k in range(self.N):
                     # Get neighbor indices with boundary conditions
-                    i_p, i_m = self._get_neighbors(i, self.L, method)
-                    j_p, j_m = self._get_neighbors(j, self.M, method)
-                    k_p, k_m = self._get_neighbors(k, self.N, method)
+                    i_p, i_m = self._get_neighbors(i, self.L)
+                    j_p, j_m = self._get_neighbors(j, self.M)
+                    k_p, k_m = self._get_neighbors(k, self.N)
                     
                     # Laplacian
                     laplacian = (
@@ -486,28 +500,28 @@ class VDERMGrid:
         self.epsilon = np.linalg.norm(rho_new - self.rho) / np.mean(self.rho)
         self.rho = rho_new
     
-    def _get_neighbors(self, idx, max_idx, method):
+    def _get_neighbors(self, idx, max_idx):
         """Get neighbor indices with boundary conditions"""
         if idx == max_idx - 1:
             idx_plus = idx
-            idx_minus = idx - 1 if method == 'free' else idx
+            idx_minus = idx - 1
         elif idx == 0:
-            idx_plus = idx + 1 if method == 'free' else idx
+            idx_plus = idx + 1
             idx_minus = idx
         else:
             idx_plus = idx + 1
             idx_minus = idx - 1
         return idx_plus, idx_minus
     
-    def update_velocities(self, method='free'):
+    def update_velocities(self):
         """Compute velocity for each node from density gradient"""
         for idx in range(len(self.positions)):
             i, j, k = self._flat_to_index(idx)
             
             # Get neighbors
-            i_p, i_m = self._get_neighbors(i, self.L, method)
-            j_p, j_m = self._get_neighbors(j, self.M, method)
-            k_p, k_m = self._get_neighbors(k, self.N, method)
+            i_p, i_m = self._get_neighbors(i, self.L)
+            j_p, j_m = self._get_neighbors(j, self.M)
+            k_p, k_m = self._get_neighbors(k, self.N)
             
             # Density gradient (centered difference)
             grad_rho = np.array([
@@ -537,86 +551,145 @@ class VDERMGrid:
     
     def compute_timestep(self):
         """Compute stable timestep based on velocities"""
+        # Compute both stability limits
         max_speed = np.max(np.abs(self.velocities).sum(axis=1))
-        dt = 2 * self.h / (3 * max_speed)
+        
+        if max_speed > 1e-10:
+            dt_advection = 2 * self.h / (3 * max_speed)
+        else:
+            dt_advection = np.inf
+        
+        # Diffusion stability (most restrictive for fine grids)
+        dt_diffusion = self.h**2 / 6
+        
+        # Take minimum with safety factor of 0.9
+        dt = min(dt_advection, dt_diffusion) * 0.9
+        dt = min(dt, 0.01)  # Cap at 0.01
         return min(dt, 0.01)
 
-
-def run_VDERM(grid, n_max=100, max_eps=0.02, method='free'):
+def run_VDERM(grid, n_max=100, max_eps=0.02, dt=None):
     """
-    Run VDERM deformation on grid.
+    Run VDERM deformation algorithm on a computational grid.
+    
+    Iteratively deforms the grid by diffusing the density field and advecting
+    grid nodes according to the resulting velocity field. Continues until either
+    convergence (epsilon ≤ max_eps) or maximum iterations reached.
     
     Parameters
     ----------
     grid : VDERMGrid
-        Grid object with initial density field set
-    n_max : int
-        Maximum iterations
-    max_eps : float
-        Convergence threshold
-    method : str
-        Boundary condition: 'free' or 'fixed'
-    exports : bool
-        If True, export grid state at regular intervals
-    export_frequency : int
-        Export every N iterations (if exports=True)
-    export_folder : str
-        Directory to save exports (created if doesn't exist)
+        Grid object with density field already set via grid.set_density()
+    n_max : int, default=100
+        Maximum number of iterations to perform
+    max_eps : float, default=0.02
+        Convergence threshold. Algorithm stops when the relative change in
+        density field (epsilon) falls below this value.
+    dt : float, optional
+        Manual timestep override. If None, timestep is computed automatically
+        based on CFL and diffusion stability conditions.
+        
+        **Note:** For density fields with strong, sustained gradients (e.g., 
+        linear gradients), automatic timestep selection may be 
+        insufficient and numerical instability can occur. Symptoms include 
+        epsilon becoming larger over time, or negative.
+        
+        If instability occurs, manually set a smaller timestep:
+        - Typical values: dt=0.001 to 0.01
+        - Strong gradients: dt=0.0001 to 0.001
     
     Returns
     -------
     grid : VDERMGrid
-        Deformed grid
+        The deformed grid object. Grid positions have been updated to reflect
+        the deformation. Original positions are preserved in grid.initial_positions.
+    
+    Raises
+    ------
+    RuntimeError
+        If numerical instability is detected (epsilon > 1e10 or epsilon < 0)
+    
+    Notes
+    -----
+    The algorithm alternates between:
+    1. Diffusing the density field (heat equation)
+    2. Computing velocities from density gradients
+    3. Advecting grid nodes according to velocities
+    
+    Convergence is measured by epsilon, the relative L2 norm of density change:
+        epsilon = ||ρ^(n+1) - ρ^n|| / mean(ρ^n)
+    
+    Examples
+    --------
+    >>> # Basic usage with automatic timestep
+    >>> grid = vderm.VDERMGrid(shape=(32, 32, 32), h=0.1, min_bounds=[0, 0, 0])
+    >>> grid.set_density(my_density_function)
+    >>> deformed_grid = vderm.run_VDERM(grid, n_max=100, max_eps=0.02)
+    >>> print(f"Converged with epsilon={deformed_grid.epsilon:.3e}")
+    
+    >>> # Manual timestep for strong gradients
+    >>> grid.set_density(lambda x, y, z: 1.0 + 5.0 * x)  # Strong linear gradient
+    >>> deformed_grid = vderm.run_VDERM(grid, dt=0.001)  # Smaller dt for stability
+    
+    >>> # Relaxed convergence for faster results
+    >>> deformed_grid = vderm.run_VDERM(grid, n_max=50, max_eps=0.05)
+    
+    See Also
+    --------
+    run_VDERM_with_tracking : Extended version with export capabilities
+    VDERMGrid.set_density : Set the density field before running
     """
     
-    # Create export folder if needed
-    if exports and not os.path.exists(export_folder):
-        os.makedirs(export_folder)
+    # Initial velocities
+    grid.update_velocities()
     
-    # Initial velocities and timestep
-    grid.update_velocities(method)
-    dt = grid.compute_timestep()
+    # Compute timestep if not provided
+    if dt is None:
+        dt = grid.compute_timestep()
+        
+        # Warn if timestep is very small
+        if dt < 0.005:
+            print(f"  ⚠ Warning: Very small timestep ({dt:.6f})")
+            print(f"    This may indicate strong density gradients.")
+            print(f"    Expect longer computation time.")
     
-    # Initialize epsilon to None for first iteration
     grid.epsilon = None
     
-    # Main iteration loop with progress bar
     pbar = tqdm(range(n_max), desc='Deforming')
     
     for iteration in pbar:
-        # Diffuse density
-        grid.update_density(dt, method)
+        grid.update_density(dt)
         
-        # Update velocities from new density field
         if iteration > 0:
-            grid.update_velocities(method)
+            grid.update_velocities()
         
-        # Move grid nodes
         grid.update_positions(dt)
         
-        # Update progress bar with current epsilon
+        # Early instability detection (check every iteration)
+        if grid.epsilon is not None:
+            if grid.epsilon > 1e6 or grid.epsilon < -1e-6 or np.isnan(grid.epsilon):
+                pbar.close()
+                print(f"\n❌ INSTABILITY at iteration {iteration}!")
+                print(f"   Epsilon: {grid.epsilon:.3e}")
+                print(f"   Current dt: {dt:.6f}")
+                print(f"   Grid spacing h: {grid.h:.6f}")
+                print(f"\n   Solution: Manually set smaller timestep:")
+                print(f"   vderm.run_VDERM(grid, dt={dt/10:.6f})")
+                raise RuntimeError("Numerical instability detected. Please manually set a smaller timestep and rerun")
+        
         if grid.epsilon is not None:
             pbar.set_postfix({'ε': f'{grid.epsilon:.3e}', 'target': f'{max_eps:.3e}'})
         
-        # Check convergence
         if grid.epsilon is not None and grid.epsilon <= max_eps:
             pbar.set_description('Converged')
             pbar.close()
             print(f'\nConverged at iteration {iteration}')
-            
-            # Export final state if exports enabled
-            if exports:
-                densities = grid.rho.ravel()
-                filepath = os.path.join(export_folder, f'grid_final_iteration_{iteration:04d}.xyz')
-                write_xyz_underlying(filepath, grid.positions, densities=densities)
-            
             break
     
     return grid
     
 
-def run_VDERM_with_tracking(grid, surface_points, surface_normals,
-                            n_max=100, max_eps=0.02, method='free',
+def run_VDERM_with_tracking(grid, surface_points,
+                            n_max=100, max_eps=0.01, dt=None,
                             export_grid=False, export_grid_frequency=10,
                             export_surface=False, export_surface_frequency=10,
                             export_mesh=False, export_mesh_frequency=20,
@@ -643,15 +716,12 @@ def run_VDERM_with_tracking(grid, surface_points, surface_normals,
         Grid object with initial density field set
     surface_points : ndarray, shape (n_points, 3)
         Original surface point cloud positions
-    surface_normals : ndarray, shape (n_points, 3)
-        Surface normal vectors (preserved through deformation)
     n_max : int, default=100
         Maximum VDERM iterations
-    max_eps : float, default=0.02
+    max_eps : float, default=0.01
         Convergence threshold for epsilon
-    method : str, default='free'
-        Boundary condition: 'free' or 'fixed'
-    
+    dt : float, optional
+        timestep can be manually assigned if the auto assigned timestep is not sufficient
     export_grid : bool, default=False
         If True, export grid positions and densities
     export_grid_frequency : int, default=10
@@ -689,8 +759,6 @@ def run_VDERM_with_tracking(grid, surface_points, surface_normals,
     -------
     grid : VDERMGrid
         Final deformed grid
-    deformed_surface : ndarray, shape (n_points, 3)
-        Final deformed surface point cloud
     
     Notes
     -----
@@ -752,8 +820,16 @@ def run_VDERM_with_tracking(grid, surface_points, surface_normals,
             os.makedirs(mesh_path, exist_ok=True)
     
     # Initial velocities and timestep
-    grid.update_velocities(method)
-    dt = grid.compute_timestep()
+    grid.update_velocities()
+    # Compute timestep if not provided
+    if dt is None:
+        dt = grid.compute_timestep()
+        
+        # Warn if timestep is very small
+        if dt < 0.005:
+            print(f"  ⚠ Warning: Very small timestep ({dt:.6f})")
+            print(f"    This may indicate strong density gradients.")
+            print(f"    Expect longer computation time.")
     grid.epsilon = None
     
     # Export initial states (iteration 0)
@@ -783,7 +859,7 @@ def run_VDERM_with_tracking(grid, surface_points, surface_normals,
                                         f'mesh_iteration_0000.{mesh_format}')
             
             if mesh_format == 'stl':
-                export_mesh(mesh_filepath, surface_points, depth=mesh_depth)
+                export_mesh_file(mesh_filepath, surface_points, depth=mesh_depth)
             else:  # vtk
                 export_mesh_vtk(mesh_filepath, surface_points, initial_mesh_densities, depth=mesh_depth)
     
@@ -792,11 +868,11 @@ def run_VDERM_with_tracking(grid, surface_points, surface_normals,
     
     for iteration in pbar:
         # Diffuse density
-        grid.update_density(dt, method)
+        grid.update_density(dt)
         
         # Update velocities from new density field
         if iteration > 0:
-            grid.update_velocities(method)
+            grid.update_velocities()
         
         # Move grid nodes
         grid.update_positions(dt)
@@ -852,10 +928,22 @@ def run_VDERM_with_tracking(grid, surface_points, surface_normals,
                                             f'mesh_iteration_{iteration+1:04d}.{mesh_format}')
                 
                 if mesh_format == 'stl':
-                    export_mesh(mesh_filepath, current_surface, depth=mesh_depth)
+                    export_mesh_file(mesh_filepath, current_surface, depth=mesh_depth)
                 else:  # vtk
                     export_mesh_vtk(mesh_filepath, current_surface, current_surface_densities, depth=mesh_depth)
                 
+        
+        # Early instability detection (check every iteration)
+        if grid.epsilon is not None:
+            if grid.epsilon > 1e6 or grid.epsilon < -1e-6 or np.isnan(grid.epsilon):
+                pbar.close()
+                print(f"\n❌ INSTABILITY at iteration {iteration}!")
+                print(f"   Epsilon: {grid.epsilon:.3e}")
+                print(f"   Current dt: {dt:.6f}")
+                print(f"   Grid spacing h: {grid.h:.6f}")
+                print(f"\n   Solution: Manually set smaller timestep:")
+                print(f"   vderm.run_VDERM(grid, dt={dt/10:.6f})")
+                raise RuntimeError("Numerical instability detected. Please manually set a smaller timestep and rerun")
         
         # Update progress bar
         if grid.epsilon is not None:
@@ -901,7 +989,7 @@ def run_VDERM_with_tracking(grid, surface_points, surface_normals,
                                                 f'mesh_final_iteration_{iteration+1:04d}.{mesh_format}')
                     
                     if mesh_format == 'stl':
-                        export_mesh(mesh_filepath, final_surface, depth=mesh_depth)
+                        export_mesh_file(mesh_filepath, final_surface, depth=mesh_depth)
                     else:  # vtk
                         export_mesh_vtk(mesh_filepath, final_surface, final_surface_densities, depth=mesh_depth)
             
@@ -914,9 +1002,6 @@ def run_VDERM_with_tracking(grid, surface_points, surface_normals,
         'min_bounds': grid.min_bounds
     }
     displacement_field = grid.get_displacement_field()
-    deformed_surface = interpolate_to_surface(
-        surface_points, params, displacement_field
-    )
     
     # Print export summary
     if any_exports:
@@ -928,15 +1013,12 @@ def run_VDERM_with_tracking(grid, surface_points, surface_normals,
         if export_mesh:
             print(f"  - Meshes (.{mesh_format} + .xyz with x y z n_x n_y n_z rho): {mesh_folder}/")
     
-    return grid, deformed_surface
+    return grid
 
     
 def interpolate_densities(surface_points, grid):
     """
     Interpolate density values from grid to surface points.
-    
-    Uses the regular grid structure for fast trilinear interpolation
-    of density values from the computational grid to arbitrary surface points.
     
     Parameters
     ----------
@@ -953,18 +1035,6 @@ def interpolate_densities(surface_points, grid):
     Notes
     -----
     Surface points outside the grid bounds will have density set to 0.
-    
-    Examples
-    --------
-    >>> # After running VDERM
-    >>> surface_pts, normals = create_pcd('mesh.stl', n_pts=25000)
-    >>> grid = VDERMGrid(shape, h, min_bounds)
-    >>> # ... run VDERM ...
-    >>> surface_densities = interpolate_densities(surface_pts, grid)
-    >>> 
-    >>> # Save surface with densities
-    >>> write_xyz('surface_with_density.xyz', surface_pts, 
-    ...          normals=normals, densities=surface_densities)
     """
     
     # Create coordinate arrays for each axis
@@ -973,7 +1043,7 @@ def interpolate_densities(surface_points, grid):
     z = grid.min_bounds[2] + np.arange(grid.N) * grid.h
     
     # Create interpolator for density field
-    # Note: density field is already in (L, M, N) shape
+    # density field is already in (L, M, N) shape
     interp_rho = RegularGridInterpolator(
         (x, y, z), 
         grid.rho,
@@ -981,14 +1051,14 @@ def interpolate_densities(surface_points, grid):
         fill_value=0  # Points outside grid get density 0
     )
     
-    # Interpolate densities at surface point locations
+    # Interpolate densities
     surface_densities = interp_rho(surface_points)
     
     return surface_densities
     
 def interpolate_velocities(surface_points, grid_params, velocity_field):
     """
-    Fast interpolation using regular grid structure.
+    Interpolate velocities from the regular grid to the surface
     
     Parameters
     ----------
@@ -1013,11 +1083,10 @@ def interpolate_velocities(surface_points, grid_params, velocity_field):
     y = min_bounds[1] + np.arange(M) * h
     z = min_bounds[2] + np.arange(N) * h
     
-    # Reshape displacement field to 3D grid
-    # displacement_field is currently (L*M*N, 3), reshape to (L, M, N, 3)
+    # Reshape velocity field to 3D grid
     velo_grid = velocity_field.reshape(L, M, N, 3)
     
-    # Create interpolators for each component (much faster!)
+    # Create interpolators for each component 
     interp_u = RegularGridInterpolator((x, y, z), velo_grid[:, :, :, 0], 
                                        bounds_error=False, fill_value=0)
     interp_v = RegularGridInterpolator((x, y, z), velo_grid[:, :, :, 1],
@@ -1025,7 +1094,7 @@ def interpolate_velocities(surface_points, grid_params, velocity_field):
     interp_w = RegularGridInterpolator((x, y, z), velo_grid[:, :, :, 2],
                                        bounds_error=False, fill_value=0)
     
-    # Interpolate (this is MUCH faster than griddata)
+    # Interpolate 
     u = interp_u(surface_points)
     v = interp_v(surface_points)
     w = interp_w(surface_points)
@@ -1036,7 +1105,8 @@ def interpolate_velocities(surface_points, grid_params, velocity_field):
 
 def interpolate_to_surface(surface_points, grid_params, displacement_field):
     """
-    Fast interpolation using regular grid structure.
+    Interpolate the grid based vector field to the surface point cloud 
+    and return the deformed surface
     
     Parameters
     ----------
@@ -1051,6 +1121,16 @@ def interpolate_to_surface(surface_points, grid_params, displacement_field):
     -------
     deformed_surface : ndarray, shape (n_points, 3)
         Surface points after applying interpolated displacements
+
+    Examples
+    --------
+    >>> # After running VDERM
+    >>> deformed_surface = interpolate_to_surface(original_surface, grid_params, vderm_grid.get_displacement_field())
+    >>> surface_densities = interpolate_densities(deformed_surface, vderm_grid)
+    >>> surface_velocities = interpolate_velocities(deformed_surface, grid_params, vderm_grid.velocities)
+    >>> # Save surface with densities and velocities
+    >>> write_xyz('surface_with_density.xyz', surface_pts, 
+    ...          normals=surface_velocities, densities=surface_densities)
     """
     L, M, N = grid_params['shape']
     h = grid_params['h']
@@ -1062,10 +1142,9 @@ def interpolate_to_surface(surface_points, grid_params, displacement_field):
     z = min_bounds[2] + np.arange(N) * h
     
     # Reshape displacement field to 3D grid
-    # displacement_field is currently (L*M*N, 3), reshape to (L, M, N, 3)
     disp_grid = displacement_field.reshape(L, M, N, 3)
     
-    # Create interpolators for each component (much faster!)
+    # Create interpolators for each component 
     interp_u = RegularGridInterpolator((x, y, z), disp_grid[:, :, :, 0], 
                                        bounds_error=False, fill_value=0)
     interp_v = RegularGridInterpolator((x, y, z), disp_grid[:, :, :, 1],
@@ -1073,7 +1152,7 @@ def interpolate_to_surface(surface_points, grid_params, displacement_field):
     interp_w = RegularGridInterpolator((x, y, z), disp_grid[:, :, :, 2],
                                        bounds_error=False, fill_value=0)
     
-    # Interpolate (this is MUCH faster than griddata)
+    # Interpolate 
     u = interp_u(surface_points)
     v = interp_v(surface_points)
     w = interp_w(surface_points)

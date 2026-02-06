@@ -44,3 +44,12 @@ paraview*/
 *.vtk
 *.gif
 *.mp4
+
+# Example outputs
+examples/vderm_exports/
+examples/my_deformation/
+examples/paraview*/
+examples/**/*.gif
+examples/**/*.mp4
+examples/**/deformed_*
+examples/**/output_*

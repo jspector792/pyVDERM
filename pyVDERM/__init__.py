@@ -46,7 +46,7 @@ from .core import (
 
 # Grid utilities
 from .core import (
-    create_underlying_grid,
+    compute_grid_dimensions,
     make_initial_grid,
     print_grid_info,
 )
@@ -56,6 +56,7 @@ from .core import (
     HAS_PYMESHLAB,
     interpolate_densities,
     interpolate_to_surface,
+    interpolate_velocities,
 )
 
 # Visualization functions (optional - only if matplotlib available)
@@ -69,11 +70,12 @@ try:
         export_meshes_to_paraview,
         export_surface_to_paraview,
         export_grid_to_paraview,
+        plot_pcd,
+        interactive_pcd_plot,
     )
     _has_visualization = True
 except ImportError:
     _has_visualization = False
-    # Don't fail import if matplotlib not available
 
 __all__ = [
     # Core classes and algorithms
@@ -91,7 +93,7 @@ __all__ = [
     'export_mesh_vtk',
     
     # Grid utilities
-    'create_underlying_grid',
+    'compute_grid_dimensions',
     'make_initial_grid',
     'print_grid_info',
     
@@ -99,6 +101,7 @@ __all__ = [
     'HAS_PYMESHLAB',
     'interpolate_densities',
     'interpolate_to_surface',
+    'interpolate_velocities',
 ]
 
 # Add visualization functions to __all__ if available
@@ -112,4 +115,6 @@ if _has_visualization:
         'export_surface_to_paraview',
         'export_meshes_to_paraview',
         'export_all_to_paraview',
+        'plot_pcd',
+        'interactive_pcd_plot',
     ])
