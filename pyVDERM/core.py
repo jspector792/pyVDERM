@@ -567,7 +567,7 @@ class VDERMGrid:
         dt = min(dt, 0.01)  # Cap at 0.01
         return min(dt, 0.01)
 
-def run_VDERM(grid, n_max=100, max_eps=0.02, dt=None):
+def run_VDERM(grid, n_max=100, max_eps=0.01, dt=None):
     """
     Run VDERM deformation algorithm on a computational grid.
     
@@ -581,7 +581,7 @@ def run_VDERM(grid, n_max=100, max_eps=0.02, dt=None):
         Grid object with density field already set via grid.set_density()
     n_max : int, default=100
         Maximum number of iterations to perform
-    max_eps : float, default=0.02
+    max_eps : float, default=0.01
         Convergence threshold. Algorithm stops when the relative change in
         density field (epsilon) falls below this value.
     dt : float, optional
@@ -964,11 +964,6 @@ def run_VDERM_with_tracking(grid, surface_points,
                     'min_bounds': grid.min_bounds
                 }
                 displacement_field = grid.get_displacement_field()
-                final_surface = interpolate_to_surface(
-                    surface_points, params, displacement_field
-                )
-                final_surface_densities = interpolate_densities(surface_points, grid)
-                final_surface_velocities = interpolate_velocities(surface_points, params, grid.velocities)
                 
                 if export_grid:
                     densities = grid.rho.ravel()
@@ -976,6 +971,14 @@ def run_VDERM_with_tracking(grid, surface_points,
                     filepath = os.path.join(base_folder, grid_folder,
                                            f'grid_final_iteration_{iteration+1:04d}.xyz')
                     write_xyz(filepath, grid.positions, normals=velocities, densities=densities)
+                
+                if export_surface or export_mesh:
+
+                    final_surface = interpolate_to_surface(
+                        surface_points, params, displacement_field
+                    )
+                    final_surface_densities = interpolate_densities(surface_points, grid)
+                    final_surface_velocities = interpolate_velocities(surface_points, params, grid.velocities)
                 
                 if export_surface:
                     filepath = os.path.join(base_folder, surface_folder,

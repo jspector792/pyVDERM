@@ -42,7 +42,9 @@ paraview*/
 *.xyz
 *.stl
 *.vtk
-*.gif
+surface.gif
+grid.gif
+*.png
 *.mp4
 
 # Example outputs
