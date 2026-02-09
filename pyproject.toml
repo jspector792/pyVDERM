@@ -5,23 +5,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pyVDERM"
 version = "0.1.0"
-description = "Volumetric Density-Equalizing Reference Map python implementation"
+description = "Volumetric Density-Equalizing Reference Map implementation"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
     {name = "Jonah Spector", email = "spector.jo@northeastern.edu"}
 ]
-keywords = ["cartogram", "deformation", "3d", "visualization", "density-equalizing"]
+keywords = ["cartogram", "deformation", "3d", "visualization", "density-equalizing", "vderm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Visualization",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 
 dependencies = [
@@ -38,3 +40,4 @@ mesh = ["pymeshlab>=2023.12"]
 [project.urls]
 Homepage = "https://github.com/jspector792/pyVDERM"
 Repository = "https://github.com/jspector792/pyVDERM"
+Issues = "https://github.com/jspector792/pyVDERM/issues"
