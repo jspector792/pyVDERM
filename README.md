@@ -4,6 +4,8 @@ Volumetric Density-Equalizing Reference Map - A Python implementation of the VDE
 
 ## Overview
 
+<img src="https://github.com/jspector792/pyVDERM/blob/main/examples/cube.gif" width="40" height="40" />
+
 pyVDERM implements the Volumetric Density-Equalizing Reference Map (VDERM) method by [Choi & Rycroft (2020)](https://link.springer.com/article/10.1007/s10915-021-01411-4). VDERM is a 3D generalization of the diffusion-based cartogram method, enabling volume-preserving deformations of 3D objects based on prescribed density distributions.
 
 ### Applications
