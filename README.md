@@ -1,6 +1,6 @@
 # pyVDERM 
 [![PyPI version](https://badge.fury.io/py/pyVDERM.svg)](https://badge.fury.io/py/pyVDERM)
-[![GitHub release](https://img.shields.io/github/v/release/yourusername/pyVDERM)](https://github.com/yourusername/pyVDERM/releases)
+[![GitHub release](https://img.shields.io/github/v/release/jspector792/pyVDERM)](https://github.com/jspector792/pyVDERM/releases)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
