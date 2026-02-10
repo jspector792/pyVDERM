@@ -185,7 +185,7 @@ And optionally, this implementation:
   title={pyVDERM: A Python implementation of Volumetric Density-Equalizing Reference Map},
   author={Jonah Spector},
   year={2026},
-  url={https://github.com/yourusername/vderm}
+  url={https://github.com/jspector792/pyVDERM}
 }
 ```
 
