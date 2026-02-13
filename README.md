@@ -88,7 +88,7 @@ final_surface = vd.interpolate_to_surface(
 )
 
 # 7. Export results
-vd.export_mesh('deformed_mesh.stl', final_surface, depth=8)
+vd.export_mesh_file('deformed_mesh.stl', final_surface, depth=8)
 ```
 
 ## Examples
